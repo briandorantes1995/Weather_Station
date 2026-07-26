@@ -48,13 +48,34 @@
         group: brian
         mode: '0755'
 
-    - name: Limpiar paquetes no usados
-      apt:
-        autoremove: yes
-        autoclean: yes
-        clean: yes
-                      
-    - name: Copiar archivos de configuracion al servidor
+    - name: Copiar archivo .env al servidor
+      copy:
+        src: "files/.env"
+        dest: "/home/brian/app/.env"
+        owner: brian
+        group: brian
+        mode: '0600'
+
+    - name: Cargar variables del .env
+      slurp:
+        src: "/home/brian/app/.env"
+      register: env_file_encoded
+
+    - name: Extraer credenciales en variables de Ansible
+      set_fact:
+        mqtt_user: "{{ (env_file_encoded['content'] | b64decode | regex_search('MQTT_USERNAME=(.*)', '\\1'))[0] | trim }}"
+        mqtt_pass: "{{ (env_file_encoded['content'] | b64decode | regex_search('MQTT_PASSWORD=(.*)', '\\1'))[0] | trim }}"
+
+    # Creamos un archivo mosquitto.passwd vacío para que Docker no de error al montar el volumen
+    - name: Asegurar que mosquitto.passwd existe y está vacío inicialmente
+      file:
+        path: /home/brian/app/mosquitto.passwd
+        state: touch
+        owner: brian
+        group: brian
+        mode: '0644'
+
+    - name: Copiar el resto de archivos de configuracion
       copy:
         src: "files/{{ item }}"
         dest: "/home/brian/app/{{ item }}"
@@ -65,34 +86,30 @@
         - docker-compose.yml
         - Caddyfile
         - mosquitto.conf
-        - mosquitto.passwd
         - telegraf.conf
-        - .env
 
+    # Levantamos los contenedores (Mosquitto arrancará con el passwd vacío y se mantendrá estable)
     - name: Levantar y Actualizar Contenedores
       become_user: brian
       shell: >
-        docker-compose  pull &&
-        docker-compose  up -d --force-recreate
+        docker-compose pull &&
+        docker-compose up -d --force-recreate
       args:
         chdir: /home/brian/app
 
-    - name: Configurar contraseña de Mosquitto
+    # Damos un respiro de 3 segundos para asegurar que el contenedor está listo para recibir comandos
+    - name: Esperar a que Mosquitto inicie
+      pause:
+        seconds: 3
+
+    # Ahora que Mosquitto está corriendo vivo y estable, inyectamos la contraseña oficial usando las variables de Ansible
+    - name: Escribir credenciales reales dentro del contenedor de Mosquitto
       become_user: brian
       shell: |
-        set -a
-        source .env
-        set +a
-        docker exec mosquitto mosquitto_passwd -c -b /mosquitto/config/mosquitto.passwd "$MQTT_USERNAME" "$MQTT_PASSWORD"
+        docker exec mosquitto mosquitto_passwd -b /mosquitto/config/mosquitto.passwd "{{ mqtt_user }}" "{{ mqtt_pass }}"
+        docker exec mosquitto chown mosquitto:mosquitto /mosquitto/config/mosquitto.passwd
+        docker exec mosquitto chmod 0700 /mosquitto/config/mosquitto.passwd
         docker restart mosquitto
         docker restart telegraf
       args:
         chdir: /home/brian/app
-        executable: /bin/bash
-     
-  
-  handlers:
-    - name: Reiniciar SSH
-      service:
-        name: ssh
-        state: restarted  

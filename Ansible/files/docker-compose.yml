@@ -5,9 +5,8 @@ services:
     image: docker.io/telegraf:latest
     container_name: telegraf
     restart: always
-    environment:
-      - MQTT_USERNAME=${MQTT_USERNAME}
-      - MQTT_PASSWORD=${MQTT_PASSWORD}
+    env_file:
+      - .env
     volumes:
       - ./telegraf.conf:/etc/telegraf/telegraf.conf:ro
     networks:

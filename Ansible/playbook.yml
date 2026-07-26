@@ -1,0 +1,83 @@
+---
+- name: Configuracion inicial VM
+  hosts: all
+  become: true
+  
+  tasks:
+    - name: Actualizar paquetes
+      apt:
+        update_cache: yes
+        upgrade: safe      
+    
+    - name: Instalar dependencias
+      apt:
+        name:
+          - curl
+          - git
+          - unzip
+          - fail2ban
+          - ca-certificates
+          - gnupg
+          - docker.io
+          - docker-compose-v2
+        state: present
+        
+    - name: Habilitar fail2ban
+      service:
+        name: fail2ban
+        enabled: true
+        state: started       
+        
+    - name: Habilitar Docker
+      service:
+        name: docker
+        enabled: true
+        state: started
+        
+    - name: Agregar usuario a Docker
+      user:
+          name: brian
+          groups: docker
+          append: true        
+          
+    - name: Crear carpeta app
+      file:
+        path: /home/brian/app
+        state: directory
+        owner: brian
+        group: brian
+        mode: '0755'
+
+    - name: Limpiar paquetes no usados
+      apt:
+        autoremove: yes
+        autoclean: yes
+        clean: yes
+                      
+    - name: Copiar archivos de configuracion al servidor
+      copy:
+        src: "files/{{ item }}"
+        dest: "/home/brian/app/{{ item }}"
+        owner: brian
+        group: brian
+        mode: '0644'
+      loop:
+        - docker-compose.yml
+        - Caddyfile
+        - mosquitto.conf
+        - telegraf.conf
+        - .env
+
+    - name: Levantar y Actualizar Contenedores
+      become_user: brian
+      shell: >
+        docker compose  pull &&
+        docker compose  up -d --force-recreate
+      args:
+        chdir: /home/brian/app
+  
+  handlers:
+    - name: Reiniciar SSH
+      service:
+        name: ssh
+        state: restarted  

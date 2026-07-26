@@ -1,0 +1,4 @@
+weather.blyndthor.com {
+    encode zstd gzip
+    reverse_proxy mosquitto:9001
+}

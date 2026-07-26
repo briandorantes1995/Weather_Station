@@ -21,6 +21,7 @@ services:
     restart: always
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto.passwd:/mosquitto/config/mosquitto.passwd:rw
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
     networks:

@@ -65,6 +65,7 @@
         - docker-compose.yml
         - Caddyfile
         - mosquitto.conf
+        - mosquitto.passwd
         - telegraf.conf
         - .env
 
@@ -75,6 +76,17 @@
         docker-compose  up -d --force-recreate
       args:
         chdir: /home/brian/app
+
+    - name: Configurar contraseña de Mosquitto
+      become_user: brian
+      shell: |
+        source .env
+        docker exec mosquitto mosquitto_passwd -c -b /mosquitto/config/mosquitto.passwd $MQTT_USERNAME $MQTT_PASSWORD
+        docker restart mosquitto
+      args:
+        chdir: /home/brian/app
+        executable: /bin/bash
+     
   
   handlers:
     - name: Reiniciar SSH

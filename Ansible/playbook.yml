@@ -80,9 +80,12 @@
     - name: Configurar contraseña de Mosquitto
       become_user: brian
       shell: |
+        set -a
         source .env
-        docker exec mosquitto mosquitto_passwd -c -b /mosquitto/config/mosquitto.passwd $MQTT_USERNAME $MQTT_PASSWORD
+        set +a
+        docker exec mosquitto mosquitto_passwd -c -b /mosquitto/config/mosquitto.passwd "$MQTT_USERNAME" "$MQTT_PASSWORD"
         docker restart mosquitto
+        docker restart telegraf
       args:
         chdir: /home/brian/app
         executable: /bin/bash

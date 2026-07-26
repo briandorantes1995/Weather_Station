@@ -71,8 +71,8 @@
     - name: Levantar y Actualizar Contenedores
       become_user: brian
       shell: >
-        docker compose  pull &&
-        docker compose  up -d --force-recreate
+        docker-compose  pull &&
+        docker-compose  up -d --force-recreate
       args:
         chdir: /home/brian/app
   

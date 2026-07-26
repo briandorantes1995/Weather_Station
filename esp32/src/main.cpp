@@ -1,101 +1,133 @@
 #include <WiFi.h>
-#include <PubSubClient.h>
+#include <WebSocketsClient.h>
 #include <ArduinoJson.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
 
-// --- CONFIGURACIÓN DE RED ---
+// --- PANTALLA OLED ---
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// --- SENSOR BME280 ---
+Adafruit_BME280 bme; // Usa dirección I2C por defecto (0x76 o 0x77)
+
+// --- RED Y WEBSOCKET ---
 const char* ssid = "Totalplay-2.4G-6130";
 const char* password = "ztwZQ5ZndM27SNhb";
-
-// --- CONFIGURACIÓN MQTT ---
 const char* mqtt_server = "weather.blyndthor.com";
-const int mqtt_port = 1883;
-const char* mqtt_user = "tu_usuario_mqtt";
-const char* mqtt_password = "tu_password_mqtt";
+const char* websocket_path = "/";
 
-// --- TÓPICO MQTT ---
-const char* mqtt_topic = "weather/sensors";
-
-WiFiClient espClient;
-PubSubClient client(espClient);
-
+WebSocketsClient webSocket;
 unsigned long lastMsg = 0;
 const long interval = 5000;
 
+void actualizarPantalla(String estado, float t, float h) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  
+  display.setCursor(0, 0);
+  display.print("Estado: ");
+  display.println(estado);
+
+  display.drawFastHLine(0, 12, 128, SSD1306_WHITE);
+
+  display.setCursor(0, 20);
+  display.setTextSize(2);
+  display.print(t, 1);
+  display.print(" C");
+
+  display.setCursor(0, 42);
+  display.print(h, 1);
+  display.print(" % Hum");
+
+  display.display();
+}
+
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+  switch(type) {
+    case WStype_DISCONNECTED:
+      Serial.println("[WS] Desconectado.");
+      break;
+    case WStype_CONNECTED:
+      Serial.println("[WS] ¡Conectado a Caddy!");
+      break;
+    default:
+      break;
+  }
+}
+
 void setup_wifi() {
   delay(10);
-  Serial.println();
-  Serial.print("Conectando a la red WiFi: ");
-  Serial.println(ssid);
-
   WiFi.begin(ssid, password);
-
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
-  }
-
-  Serial.println("");
-  Serial.println("¡WiFi conectado!");
-  Serial.print("Dirección IP asignada: ");
-  Serial.println(WiFi.localIP());
-}
-
-void reconnect() {
-  while (!client.connected()) {
-    Serial.print("Intentando conexión MQTT...");
-    
-    String clientId = "ESP32C3-Weather-";
-    clientId += String((uint32_t)ESP.getEfuseMac(), HEX);
-
-    if (client.connect(clientId.c_str(), mqtt_user, mqtt_password)) {
-      Serial.println(" ¡Conectado al broker MQTT!");
-    } else {
-      Serial.print(" Falló la conexión, rc=");
-      Serial.print(client.state());
-      Serial.println(" Reintentando en 5 segundos...");
-      delay(5000);
-    }
   }
 }
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+
+  // Iniciar I2C en los pines por defecto del ESP32-C3 (GPIO 8 y 9)
+  Wire.begin(8, 9);
+
+  // Iniciar OLED
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("Fallo OLED"));
+  }
+
+  // Iniciar BME280 (Prueba con 0x76 si no lo detecta)
+  if (!bme.begin(0x76, &Wire)) {
+    Serial.println(F("No se encontró el sensor BME280, revisa el cableado!"));
+  }
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("Conectando WiFi...");
+  display.display();
 
   setup_wifi();
-  
-  client.setServer(mqtt_server, mqtt_port);
-  client.setBufferSize(512);
+
+  webSocket.beginSSL(websocket_server, 443, websocket_path);
+  webSocket.onEvent(webSocketEvent);
+  webSocket.setReconnectInterval(5000);
 }
 
 void loop() {
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
+  webSocket.loop();
 
   unsigned long now = millis();
   if (now - lastMsg > interval) {
     lastMsg = now;
 
-    float temperatura = 25.4 + (random(0, 20) / 10.0);
-    float humedad     = 55.0 + (random(0, 50) / 10.0);
-    float presion     = 1013.25 + (random(-10, 10) / 10.0);
+    if (WiFi.status() == WL_CONNECTED) {
+      // --- LECTURA REAL DEL SENSOR ---
+      float temperatura = bme.readTemperature();
+      float humedad     = bme.readHumidity();
+      float presion     = bme.readPressure() / 100.0F; // Convertir a hPa
 
-    JsonDocument doc;
-    doc["device"] = "esp32_c3_station";
-    doc["temperature"] = temperatura;
-    doc["humidity"] = humedad;
-    doc["pressure"] = presion;
+      JsonDocument doc;
+      doc["device"] = "esp32_c3_station";
+      doc["temperature"] = temperatura;
+      doc["humidity"] = humedad;
+      doc["pressure"] = presion;
 
-    char buffer[256];
-    serializeJson(doc, buffer);
+      char buffer[256];
+      serializeJson(doc, buffer);
 
-    Serial.print("Publicando en [");
-    Serial.print(mqtt_topic);
-    Serial.print("] -> ");
-    Serial.println(buffer);
-    
-    client.publish(mqtt_topic, buffer);
+      webSocket.sendTXT(buffer);
+      
+      actualizarPantalla("Enviado", temperatura, humedad);
+    } else {
+      actualizarPantalla("Sin WiFi", 0.0, 0.0);
+    }
   }
 }

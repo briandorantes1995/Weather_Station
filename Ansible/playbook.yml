@@ -47,6 +47,14 @@
         owner: brian
         group: brian
         mode: '0755'
+        
+    - name: Copiar credencial de Google Cloud para BigQuery
+      copy:
+        src: "files/gcp-sa.json"
+        dest: "/home/brian/app/gcp-sa.json"
+        owner: brian
+        group: brian
+        mode: '0644'    
 
     - name: Copiar archivo .env al servidor
       copy:
